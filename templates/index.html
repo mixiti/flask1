@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breakout Game</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #fafafa;
+        }
+        #game-container {
+            background-color: #b3e5fc; /* 浅蓝色背景 */
+            margin-bottom: 20px;
+        }
+        #speedUpButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #00796b;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #speedUpButton:hover {
+            background-color: #004d40;
+        }
+        #scoreboard {
+            margin-top: 20px;
+            width: 300px;
+            border: 1px solid #00796b;
+            padding: 10px;
+            background-color: #f1f1f1;
+        }
+        #scoreboard h2 {
+            text-align: center;
+            color: #00796b;
+        }
+        .score-item {
+            margin: 5px 0;
+            padding: 5px;
+            background-color: #ffffff;
+            border: 1px solid #00796b;
+            border-radius: 5px;
+        }
+        #player-name-input {
+            margin-top: 20px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/2.6.2/phaser.min.js"></script>
+</head>
+<body>
+    <!-- 输入玩家名字 -->
+    <div id="player-name-input">
+        <label for="player-name">请输入玩家名字: </label>
+        <input type="text" id="player-name" />
+        <button onclick="startGame()">开始游戏</button>
+    </div>
+
+    <!-- 游戏画布的容器 -->
+    <div id="game-container"></div>
+
+    <!-- HTML 加速按钮，默认隐藏，位于画布外部 -->
+    <button id="speedUpButton" style="display: none;">加速小球</button>
+
+    <!-- 显示玩家得分的区域 -->
+    <div id="scoreboard">
+        <h2>玩家得分历史</h2>
+        <div id="score-list"></div>
+    </div>
+
+<script>
+    let playerId = null; // 当前玩家ID
+
+    // 创建游戏实例
+    var game = new Phaser.Game(480, 320, Phaser.AUTO, 'game-container', { preload: preload, create: create, update: update });
+
+    // 定义游戏对象和变量
+    var ball, paddle, bricks;
+    var scoreText, livesText, lifeLostText, startButton;
+    var score = 0;
+    var lives = 3;
+    var playing = false;
+    var ballSpeed = 150;
+
+    // 预加载资源
+    function preload() {
+        game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
+        game.scale.pageAlignHorizontally = true;
+        game.scale.pageAlignVertically = true;
+        // 载入图片资源
+        game.load.image('paddle', 'paddle.png');
+        game.load.image('brick', 'brick.png'); // 使用统一的砖块图片
+        game.load.spritesheet('ball', 'wobble.png', 20, 20);
+        game.load.spritesheet('button', 'button.png', 120, 40);
+    }
+
+    // 创建游戏场景
+    function create() {
+        game.physics.startSystem(Phaser.Physics.ARCADE);
+        game.physics.arcade.checkCollision.down = false;
+
+        // 设置浅蓝色背景
+        game.stage.backgroundColor = '#b3e5fc';
+
+        // 创建小球
+        ball = game.add.sprite(game.world.width * 0.5, game.world.height - 25, 'ball');
+        ball.animations.add('wobble', [0, 1, 0, 2, 0, 1, 0, 2], 24);
+        ball.anchor.set(0.5);
+        game.physics.enable(ball, Phaser.Physics.ARCADE);
+        ball.body.collideWorldBounds = true;
+        ball.body.bounce.set(1);
+        ball.checkWorldBounds = true;
+        ball.events.onOutOfBounds.add(ballLeaveScreen, this);
+
+        // 创建挡板
+        paddle = game.add.sprite(game.world.width * 0.5, game.world.height - 5, 'paddle');
+        paddle.anchor.set(0.5, 1);
+        game.physics.enable(paddle, Phaser.Physics.ARCADE);
+        paddle.body.immovable = true;
+
+        // 初始化砖块
+        initBricks();
+
+        // 创建分数和生命显示
+        var textStyle = { font: '18px Arial', fill: '#00796b' };
+        scoreText = game.add.text(5, 5, 'Points: 0', textStyle);
+        livesText = game.add.text(game.world.width - 5, 5, 'Lives: ' + lives, textStyle);
+        livesText.anchor.set(1, 0);
+        lifeLostText = game.add.text(game.world.width * 0.5, game.world.height * 0.5, 'Life lost, tap to continue', textStyle);
+        lifeLostText.anchor.set(0.5);
+        lifeLostText.visible = false;
+
+        // 创建开始游戏按钮
+        startButton = game.add.button(game.world.width * 0.5, game.world.height * 0.5, 'button', startGame, this, 1, 0, 2);
+        startButton.anchor.set(0.5);
+
+        // 获取 HTML 加速按钮元素
+        const speedUpButton = document.getElementById('speedUpButton');
+        speedUpButton.style.display = 'none'; // 初始隐藏
+
+        // 添加点击事件：加速小球速度
+        speedUpButton.addEventListener('click', increaseBallSpeed);
+
+        // 加载玩家得分历史
+        loadScores();
+    }
+
+    // 游戏更新逻辑
+    function update() {
+        if (playing) {
+            paddle.x = game.input.x || game.world.width * 0.5;
+            game.physics.arcade.collide(ball, paddle, ballHitPaddle);
+            game.physics.arcade.collide(ball, bricks, ballHitBrick);
+        }
+    }
+
+    // 加载得分历史
+    function loadScores() {
+        fetch('/get_scores')
+            .then(response => response.json())
+            .then(data => {
+                const scoreList = document.getElementById('score-list');
+                scoreList.innerHTML = ''; // 清空现有列表
+                data.forEach(player => {
+                    const div = document.createElement('div');
+                    div.classList.add('score-item');
+                    div.innerText = player.name + ': ' + player.score + ' 分';
+                    scoreList.appendChild(div);
+                });
+            });
+    }
+
+    // 初始化砖块
+    function initBricks() {
+        var brickInfo = {
+            width: 50,
+            height: 20,
+            count: { row: 7, col: 3 },
+            offset: { top: 50, left: 60 },
+            padding: 10
+        };
+        bricks = game.add.group();
+        for (var c = 0; c < brickInfo.count.col; c++) {
+            for (var r = 0; r < brickInfo.count.row; r++) {
+                var brickX = (r * (brickInfo.width + brickInfo.padding)) + brickInfo.offset.left;
+                var brickY = (c * (brickInfo.height + brickInfo.padding)) + brickInfo.offset.top;
+                var newBrick = game.add.sprite(brickX, brickY, 'brick');
+                game.physics.enable(newBrick, Phaser.Physics.ARCADE);
+                newBrick.body.immovable = true;
+                newBrick.anchor.set(0.5);
+                bricks.add(newBrick);
+            }
+        }
+    }
+
+    // 小球击中砖块
+    function ballHitBrick(ball, brick) {
+        brick.kill();
+        score += 10;
+        scoreText.setText('Points: ' + score);
+
+        if (bricks.countLiving() === 0) {
+            alert('You won the game!');
+            updatePlayerScore();
+            location.reload();
+        }
+    }
+
+    // 增加小球速度
+    function increaseBallSpeed() {
+        ballSpeed += 50;
+        ball.body.velocity.x *= 1.2;
+        ball.body.velocity.y *= 1.2;
+    }
+
+    // 小球出界
+    function ballLeaveScreen() {
+        lives--;
+        if (lives) {
+            livesText.setText('Lives: ' + lives);
+            lifeLostText.visible = true;
+            ball.reset(game.world.width * 0.5, game.world.height - 25);
+            game.input.onDown.addOnce(function () {
+                lifeLostText.visible = false;
+                ball.body.velocity.set(ballSpeed, -ballSpeed);
+            }, this);
+        } else {
+            alert('Game Over!');
+            updatePlayerScore();
+            location.reload();
+        }
+    }
+
+    // 小球击中挡板
+    function ballHitPaddle(ball, paddle) {
+        var diff = 0;
+        if (ball.x < paddle.x) {
+            diff = paddle.x - ball.x;
+            ball.body.velocity.x = -10 * diff;
+        } else if (ball.x > paddle.x) {
+            diff = ball.x - paddle.x;
+            ball.body.velocity.x = 10 * diff;
+        } else {
+            ball.body.velocity.x = 2 + Math.random() * 8;
+        }
+    }
+
+    // 更新玩家得分到后端
+    function updatePlayerScore() {
+        if (playerId !== null) {
+            fetch('/update_score', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ player_id: playerId, score: score })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Player score updated:', data.message);
+            });
+        }
+    }
+
+    // 开始游戏
+    function startGame() {
+        const playerName = document.getElementById('player-name').value;
+        if (!playerName) {
+            alert('请输入玩家名字');
+            return;
+        }
+
+        fetch('/start_game', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ player_name: playerName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                playerId = data.player_id;
+                playing = true;
+                ball.body.velocity.set(ballSpeed, -ballSpeed);
+                document.getElementById('speedUpButton').style.display = 'block'; // 显示加速按钮
+                loadScores();
+            } else {
+                alert('游戏启动失败：' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error starting game:', error);
+        });
+    }
+</script>
+
+</body>
+</html>
